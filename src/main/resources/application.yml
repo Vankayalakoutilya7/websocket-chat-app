@@ -9,4 +9,4 @@ spring:
       authentication-database: admin
 
 server:
-  port: 8088
+  port: ${PORT:8088}
