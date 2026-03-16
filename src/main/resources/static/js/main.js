@@ -1,5 +1,6 @@
 'use strict';
 
+const API_BASE = "https://websocket-chat-app-yv9q.onrender.com";
 const usernamePage = document.querySelector('#username-page');
 const chatPage = document.querySelector('#chat-page');
 const usernameForm = document.querySelector('#usernameForm');
@@ -99,7 +100,7 @@ function onGroupMessageReceived(payload) {
 
 async function fetchGroupChat(groupId) {
 
-    const response = await fetch(`/group/messages/${groupId}`);
+    const response = await fetch(`${API_BASE}/group/messages/${groupId}`);
 
     const messages = await response.json();
 
@@ -148,7 +149,7 @@ async function createGroup(){
         members: members
     };
 
-    const response = await fetch(`/groups`, {
+    const response = await fetch(`${API_BASE}/groups`, {
         method: "POST",
         headers: {
             "Content-Type": "application/json"
@@ -167,7 +168,7 @@ document
     .addEventListener("click", createGroup);
 
 async function findAndDisplayConnectedUsers() {
-    const connectedUsersResponse = await fetch('/users');
+    const connectedUsersResponse = await fetch(`${API_BASE}/users`);
     let connectedUsers = [];
 
     if (connectedUsersResponse.ok) {
@@ -295,7 +296,7 @@ function displayMessage(senderId, content, timestamp = new Date()) {
 }
 
 async function fetchAndDisplayUserChat() {
-    const userChatResponse = await fetch(`/messages/${nickname}/${selectedUserId}`);
+    const userChatResponse = await fetch(`${API_BASE}/messages/${nickname}/${selectedUserId}`);
     const userChat = await userChatResponse.json();
     chatArea.innerHTML = '';
     userChat.forEach(chat => {
@@ -356,7 +357,7 @@ async function loadGroups(){
         return;
     }
 
-    const response = await fetch(`/groups/${nickname}`);
+    const response = await fetch(`${API_BASE}/groups/${nickname}`);
 
     const groups = await response.json();
 
@@ -453,7 +454,7 @@ async function sendFile(){
     const formData = new FormData();
     formData.append("file", file);
 
-    const response = await fetch("/upload", {
+    const response = await fetch(`${API_BASE}/upload`,  {
         method:"POST",
         body: formData
     });
