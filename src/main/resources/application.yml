@@ -1,0 +1,12 @@
+spring:
+  data:
+    mongodb:
+      host: localhost
+      port: 27017
+      database: chat_app
+      username: chatbot
+      password: chatbot
+      authentication-database: admin
+
+server:
+  port: 8088
