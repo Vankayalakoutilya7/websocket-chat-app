@@ -41,6 +41,7 @@ function connect(event) {
 
 function onConnected() {
 
+    findAndDisplayConnectedUsers();
     stompClient.subscribe(`/user/queue/messages`, onMessageReceived);
     stompClient.subscribe(`/topic/public`, onMessageReceived);
     stompClient.subscribe(`/topic/groups`, onGroupCreated);
@@ -53,7 +54,7 @@ function onConnected() {
 
     document.querySelector('#connected-user-fullname').textContent = fullname;
 
-    findAndDisplayConnectedUsers();   // ✔ only here
+      // ✔ only here
     loadGroups();
 }
 
