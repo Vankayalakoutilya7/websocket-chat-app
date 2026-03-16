@@ -1,6 +1,5 @@
 'use strict';
-
-const API_BASE = "https://websocket-chat-app-yv9q.onrender.com";
+const API_BASE = window.location.origin;
 const usernamePage = document.querySelector('#username-page');
 const chatPage = document.querySelector('#chat-page');
 const usernameForm = document.querySelector('#usernameForm');
@@ -42,6 +41,7 @@ function connect(event) {
 function onConnected() {
 
     findAndDisplayConnectedUsers();
+    setInterval(findAndDisplayConnectedUsers, 3000);
     stompClient.subscribe(`/user/queue/messages`, onMessageReceived);
     stompClient.subscribe(`/topic/public`, onMessageReceived);
     stompClient.subscribe(`/topic/groups`, onGroupCreated);
