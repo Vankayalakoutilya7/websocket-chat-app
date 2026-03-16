@@ -25,7 +25,7 @@ function connect(event) {
         usernamePage.classList.add('hidden');
         chatPage.classList.remove('hidden');
 
-        const socket = new SockJS('/ws');
+        const socket = new SockJS("https://websocket-chat-app-yv9q.onrender.com/ws");
         stompClient = Stomp.over(socket);
 
         stompClient.connect(
