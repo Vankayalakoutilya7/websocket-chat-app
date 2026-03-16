@@ -8,6 +8,7 @@ import org.springframework.messaging.handler.annotation.SendTo;
 import org.springframework.stereotype.Controller;
 import org.springframework.web.bind.annotation.GetMapping;
 
+import java.util.Collections;
 import java.util.List;
 
 @Controller
@@ -27,8 +28,14 @@ public class UserController {
         return user;
     }
     @GetMapping("/users")
-    public ResponseEntity<List<User>> findConnectedUsers(){
-        return ResponseEntity.ok(service.findConnectedUsers());
+    public ResponseEntity<List<User>> findConnectedUsers() {
+        try {
+            List<User> users = service.findConnectedUsers();
+            return ResponseEntity.ok(users);
+        } catch (Exception e) {
+            e.printStackTrace();
+            return ResponseEntity.ok(Collections.emptyList());
+        }
     }
-}
+    }
 
