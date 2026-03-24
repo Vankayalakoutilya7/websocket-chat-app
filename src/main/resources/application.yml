@@ -4,4 +4,4 @@ server:
 spring:
   data:
     mongodb:
-      uri: ${SPRING_DATA_MONGODB_URI}
+      uri: mongodb+srv://vankayalakoutilya7_db_user:vankayalakoutilya7_db_user@cluster0.lvbp8d3.mongodb.net/chatdb?retryWrites=true&w=majority
