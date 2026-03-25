@@ -4,4 +4,4 @@ server:
 spring:
   data:
     mongodb:
-      uri: mongodb+srv://vankayalakoutilya7_db_user:Koutilya123@cluster0.lvbp8d3.mongodb.net/chatdb?retryWrites=true&w=majority
+      uri: mongodb+srv://vankayalakoutilya7_db_user:koutilya123@cluster0.lvbp8d3.mongodb.net/chatdb?retryWrites=true&w=majority
