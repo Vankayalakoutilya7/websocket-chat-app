@@ -12,7 +12,7 @@ The backend is deployed on **Render**, and the database is hosted on **MongoDB A
 
 Backend URL
 
-https://websocket-chat-app-yv9q.onrender.com
+https://websocket-chat-app-1-u0se.onrender.com
 
 ---
 
