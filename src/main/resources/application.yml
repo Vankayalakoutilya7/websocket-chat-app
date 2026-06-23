@@ -2,6 +2,7 @@ spring:
   data:
     mongodb:
       uri: ${SPRING_DATA_MONGODB_URI:mongodb+srv://vankayalakoutilya7_db_user:xWqK3ISryShXerLq@cluster0.lvbp8d3.mongodb.net/chatdb?retryWrites=true&w=majority&appName=Cluster0}
+      auto-index-creation: true
   servlet:
     multipart:
       enabled: true
@@ -9,4 +10,8 @@ spring:
       max-request-size: 10MB
 
 server:
-  port: 8080
+  port: ${PORT:8080}
+
+logging:
+  level:
+    org.springframework.web.socket: DEBUG

@@ -12,17 +12,17 @@ public class FileController {
 
     @PostMapping("/upload")
     public String uploadFile(@RequestParam("file") MultipartFile file) throws Exception {
+        // Use absolute path based on working directory — works on local and Render
+        Path uploadPath = Paths.get(System.getProperty("user.dir"), "uploads");
 
-        Path uploadPath = Paths.get("uploads");
-
-        if(!Files.exists(uploadPath)){
+        if (!Files.exists(uploadPath)) {
             Files.createDirectories(uploadPath);
         }
 
-        Path filePath = uploadPath.resolve(file.getOriginalFilename());
-
+        String filename = System.currentTimeMillis() + "_" + file.getOriginalFilename();
+        Path filePath = uploadPath.resolve(filename);
         Files.write(filePath, file.getBytes());
 
-        return "/uploads/" + file.getOriginalFilename();
+        return "/uploads/" + filename;
     }
 }
