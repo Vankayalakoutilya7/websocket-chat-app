@@ -1,4 +1,12 @@
 spring:
   data:
     mongodb:
-      uri: mongodb+srv://chatuser:chat123@cluster0.tdnwj1v.mongodb.net/chatdb?retryWrites=true&w=majority
+      uri: ${SPRING_DATA_MONGODB_URI:mongodb+srv://vankayalakoutilya7_db_user:xWqK3ISryShXerLq@cluster0.lvbp8d3.mongodb.net/chatdb?retryWrites=true&w=majority&appName=Cluster0}
+  servlet:
+    multipart:
+      enabled: true
+      max-file-size: 10MB
+      max-request-size: 10MB
+
+server:
+  port: 8080

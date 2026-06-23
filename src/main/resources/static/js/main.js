@@ -1,472 +1,439 @@
 'use strict';
 const API_BASE = window.location.origin;
-const usernamePage = document.querySelector('#username-page');
-const chatPage = document.querySelector('#chat-page');
-const usernameForm = document.querySelector('#usernameForm');
-const messageForm = document.querySelector('#messageForm');
-const messageInput = document.querySelector('#message');
-const connectingElement = document.querySelector('.connecting');
-const chatArea = document.querySelector('#chat-messages');
-const logout = document.querySelector('#logout');
 
-let stompClient = null;
-let nickname = null;
-let fullname = null;
-let selectedUserId = null;
-let selectedGroupId = null;
+// DOM refs
+const usernamePage     = document.querySelector('#username-page');
+const chatPage         = document.querySelector('#chat-page');
+const usernameForm     = document.querySelector('#usernameForm');
+const messageForm      = document.querySelector('#messageForm');
+const messageInput     = document.querySelector('#message');
+const chatArea         = document.querySelector('#chat-messages');
+const logout           = document.querySelector('#logout');
+const groupList        = document.querySelector('#groupsList');
+const emptyState       = document.querySelector('#empty-state');
+const chatHeader       = document.querySelector('#chat-header');
+const chatHeaderName   = document.querySelector('#chat-header-name');
+const chatHeaderAvatar = document.querySelector('#chat-header-avatar');
+const groupModal       = document.querySelector('#groupModal');
+
+let stompClient       = null;
+let nickname          = null;
+let fullname          = null;
+let selectedUserId    = null;
+let selectedGroupId   = null;
 let groupSubscription = null;
-const groupList = document.querySelector('#groupsList');
 
-function connect(event) {
-    nickname = document.querySelector('#nickname').value.trim();
-    fullname = document.querySelector('#fullname').value.trim();
+// Tracks unread counts so the 3-second poll doesn't wipe them
+const unreadCounts = {};   // { [nickname|groupId]: number }
 
-    if (nickname && fullname) {
-        usernamePage.classList.add('hidden');
-        chatPage.classList.remove('hidden');
-
-        const socket = new SockJS("https://websocket-chat-app-yv9q.onrender.com/ws");
-        stompClient = Stomp.over(socket);
-
-        stompClient.connect(
-            { nickname: nickname },
-            onConnected,
-            onError
-        );
-    }
-    event.preventDefault();
+// ── Helpers ───────────────────────────────────────────────────
+function initials(name) {
+    return name ? name.split(' ').map(w => w[0]).join('').substring(0, 2).toUpperCase() : '?';
 }
 
+function setHeader(name, isGroup = false) {
+    chatHeaderAvatar.textContent = initials(name);
+    chatHeaderAvatar.style.background = isGroup
+        ? 'linear-gradient(135deg, #00d4aa, #6c63ff)'
+        : 'linear-gradient(135deg, #6c63ff, #9c95ff)';
+    chatHeaderName.textContent = name;
+    emptyState.classList.add('hidden');
+    chatHeader.classList.remove('hidden');
+    messageForm.classList.remove('hidden');
+}
 
-function onConnected() {
+function setBadge(id, count) {
+    unreadCounts[id] = count;
+    const el = document.getElementById(id);
+    if (!el) return;
+    const badge = el.querySelector('.nbr-msg');
+    if (!badge) return;
+    if (count > 0) {
+        badge.textContent = count;
+        badge.classList.remove('hidden');
+    } else {
+        badge.textContent = '0';
+        badge.classList.add('hidden');
+    }
+}
 
-    findAndDisplayConnectedUsers();
-    setInterval(findAndDisplayConnectedUsers, 3000);
-    stompClient.subscribe(`/user/queue/messages`, onMessageReceived);
-    stompClient.subscribe(`/topic/public`, onMessageReceived);
-    stompClient.subscribe(`/topic/groups`, onGroupCreated);
+function incrementBadge(id) {
+    const current = unreadCounts[id] || 0;
+    setBadge(id, current + 1);
+}
 
-    stompClient.send("/app/user.addUser", {}, JSON.stringify({
-        nickname: nickname,
-        fullname: fullname,
-        status: 'ONLINE'
-    }));
+// ── Connect ───────────────────────────────────────────────────
+function connect(event) {
+    event.preventDefault();
+    nickname = document.querySelector('#nickname').value.trim();
+    fullname = document.querySelector('#fullname').value.trim();
+    if (!nickname || !fullname) return;
+
+    usernamePage.classList.add('hidden');
+    chatPage.classList.remove('hidden');
 
     document.querySelector('#connected-user-fullname').textContent = fullname;
+    document.querySelector('#me-avatar-letter').textContent = initials(fullname);
 
-      // ✔ only here
+    const socket = new SockJS(`${API_BASE}/ws`);
+    stompClient = Stomp.over(socket);
+    stompClient.debug = null;
+
+    stompClient.connect({ nickname }, onConnected, onError);
+}
+
+function onConnected() {
+    findAndDisplayConnectedUsers();
+    setInterval(findAndDisplayConnectedUsers, 3000);
+
+    // Subscribe to /user/queue/messages — Spring's convertAndSendToUser()
+    // automatically routes to the correct user session. No nickname needed in the path.
+    stompClient.subscribe('/user/queue/messages', onPrivateMessageReceived);
+
+    // BUG FIX 2: /topic/public carries User join/leave events, NOT chat messages.
+    // Handle them separately — only refresh the user list, don't treat as a chat message.
+    stompClient.subscribe('/topic/public', onUserPresenceEvent);
+
+    stompClient.subscribe('/topic/groups', onGroupCreated);
+
+    stompClient.send('/app/user.addUser', {}, JSON.stringify({
+        nickname, fullname, status: 'ONLINE'
+    }));
+
     loadGroups();
 }
 
-function onGroupCreated(payload){
-
-    const group = JSON.parse(payload.body);
-
-    console.log("Group broadcast received:", group);
-
-    if(group.members.includes(nickname)){
-        appendGroupElement(group);
-    }
+function onError() {
+    console.error('WebSocket connection failed. Please refresh.');
 }
 
-function onGroupMessageReceived(payload) {
-
-    const message = JSON.parse(payload.body);
-
-    if(message.groupId === selectedGroupId){
-
-        displayMessage(message.senderId, message.content,message.timestamp);
-        chatArea.scrollTop = chatArea.scrollHeight;
-
-    }else{
-
-        const groupElement = document.getElementById(message.groupId);
-
-        if(groupElement){
-            const nbrMsg = groupElement.querySelector('.nbr-msg');
-
-            if(!nbrMsg) return;
-            let count = parseInt(nbrMsg.textContent);
-
-            if(isNaN(count)){
-                count = 0;
-            }
-
-            nbrMsg.textContent = count + 1;
-            nbrMsg.classList.remove('hidden');
-        }
-
-    }
+// ── Presence events (join / leave) ────────────────────────────
+// BUG FIX 2 (continued): This receives User objects, not ChatMessages.
+// We just refresh the connected-users list.
+function onUserPresenceEvent(payload) {
+    findAndDisplayConnectedUsers();
 }
 
-async function fetchGroupChat(groupId) {
-
-    const response = await fetch(`${API_BASE}/group/messages/${groupId}`);
-
-    const messages = await response.json();
-
-    chatArea.innerHTML = "";
-
-    messages.forEach(msg => {
-        displayMessage(msg.senderId, msg.content,msg.timestamp);
-    });
-}
-
-function appendGroupElement(group) {
-
-    if(document.getElementById(group.id)) return;
-
-    const listItem = document.createElement('li');
-
-    listItem.classList.add('group-item');
-
-    listItem.id = group.id;
-
-    listItem.textContent = group.name;
-
-    listItem.addEventListener('click', groupItemClick);
-
-    const receivedMsgs = document.createElement('span');
-    receivedMsgs.classList.add('nbr-msg', 'hidden');
-    receivedMsgs.textContent = '0';
-
-    listItem.appendChild(receivedMsgs);
-
-    groupList.appendChild(listItem);
-}
-
-async function createGroup(){
-
-    const groupName = prompt("Enter group name");
-
-    const members = prompt("Enter members (comma separated)")
-        .split(",")
-        .map(m => m.trim());
-
-    members.push(nickname);
-
-    const group = {
-        name: groupName,
-        members: members
-    };
-
-    const response = await fetch(`${API_BASE}/groups`, {
-        method: "POST",
-        headers: {
-            "Content-Type": "application/json"
-        },
-        body: JSON.stringify(group)
-    });
-
-    const createdGroup = await response.json();
-
-    // show immediately for creator
-    appendGroupElement(createdGroup);
-}
-
-document
-    .getElementById("createGroupBtn")
-    .addEventListener("click", createGroup);
-
+// ── Users ─────────────────────────────────────────────────────
 async function findAndDisplayConnectedUsers() {
-    const connectedUsersResponse = await fetch(`${API_BASE}/users`);
-    let connectedUsers = [];
+    const res = await fetch(`${API_BASE}/users`);
+    if (!res.ok) return;
+    const text = await res.text();
+    let users = text ? JSON.parse(text) : [];
+    users = users.filter(u => u.nickname !== nickname);
 
-    if (connectedUsersResponse.ok) {
-        const text = await connectedUsersResponse.text();
-        connectedUsers = text ? JSON.parse(text) : [];
-    }
-    connectedUsers = connectedUsers.filter(user => user.nickname !== nickname);
-    const connectedUsersList = document.getElementById('connectedUsers');
-    connectedUsersList.innerHTML = '';
+    const list = document.getElementById('connectedUsers');
 
-    connectedUsers.forEach(user => {
-        appendUserElement(user, connectedUsersList);
-        if (connectedUsers.indexOf(user) < connectedUsers.length - 1) {
-            const separator = document.createElement('li');
-            separator.classList.add('separator');
-            connectedUsersList.appendChild(separator);
+    // BUG FIX 3: Don't wipe the list wholesale — only add new users and remove
+    // gone ones, so existing unread badges are preserved.
+    const existingIds = new Set([...list.querySelectorAll('.user-item')].map(el => el.id));
+    const incomingIds = new Set(users.map(u => u.nickname));
+
+    // Remove users who left
+    existingIds.forEach(id => {
+        if (!incomingIds.has(id)) {
+            const el = document.getElementById(id);
+            if (el) el.remove();
+            delete unreadCounts[id];
+        }
+    });
+
+    // Add users who are new
+    users.forEach(user => {
+        if (!existingIds.has(user.nickname)) {
+            appendUserElement(user, list);
         }
     });
 }
 
-function appendUserElement(user, connectedUsersList) {
-    const listItem = document.createElement('li');
-    listItem.classList.add('user-item');
-    listItem.id = user.nickname;
+function appendUserElement(user, list) {
+    const li = document.createElement('li');
+    li.classList.add('user-item');
+    li.id = user.nickname;
 
-    const userImage = document.createElement('img');
-    userImage.src = '/image/user_icon.png';
-    userImage.alt = user.fullname;
+    const img = document.createElement('img');
+    img.src = '/image/user_icon.png';
+    img.alt = user.fullname;
 
-    const usernameSpan = document.createElement('span');
-    usernameSpan.textContent = user.fullname;
+    const nameSpan = document.createElement('span');
+    nameSpan.textContent = user.fullname;
 
-    const receivedMsgs = document.createElement('span');
-    receivedMsgs.textContent = '0';
-    receivedMsgs.classList.add('nbr-msg', 'hidden');
+    const badge = document.createElement('span');
+    badge.classList.add('nbr-msg', 'hidden');
+    badge.textContent = '0';
 
-    listItem.appendChild(userImage);
-    listItem.appendChild(usernameSpan);
-    listItem.appendChild(receivedMsgs);
-
-    listItem.addEventListener('click', userItemClick);
-
-    connectedUsersList.appendChild(listItem);
+    li.appendChild(img);
+    li.appendChild(nameSpan);
+    li.appendChild(badge);
+    li.addEventListener('click', userItemClick);
+    list.appendChild(li);
 }
 
-function userItemClick(event) {
-
-    document.querySelectorAll('.user-item').forEach(item => {
-        item.classList.remove('active');
-    });
-
-    const clickedUser = event.currentTarget;
-    clickedUser.classList.add('active');
-
-    selectedUserId = clickedUser.getAttribute('id');
+function userItemClick(e) {
+    document.querySelectorAll('.user-item, .group-item').forEach(i => i.classList.remove('active'));
+    const item = e.currentTarget;
+    item.classList.add('active');
+    selectedUserId = item.id;
     selectedGroupId = null;
 
-    messageForm.classList.remove('hidden'); // show input
+    // Clear badge
+    setBadge(selectedUserId, 0);
 
-    const nbrMsg = clickedUser.querySelector('.nbr-msg');
-    if(nbrMsg){
-        nbrMsg.classList.add('hidden');
-        nbrMsg.textContent = '0';
-    }
-
+    const nameEl = item.querySelector('span:not(.nbr-msg)');
+    setHeader(nameEl ? nameEl.textContent : selectedUserId);
     fetchAndDisplayUserChat();
 }
 
-function displayMessage(senderId, content, timestamp = new Date()) {
-
-    const container = document.createElement('div');
-    container.classList.add('message');
-
-    if(senderId === nickname){
-        container.classList.add('sender');
-    }else{
-        container.classList.add('receiver');
-    }
-    container.style.wordBreak = "break-word";
-    // Sender name
-    if(senderId !== nickname){
-        const sender = document.createElement('div');
-        sender.classList.add('sender-name');
-        sender.textContent = senderId;
-        container.appendChild(sender);
-    }
-
-    // Message content
-    if(content.match(/\.(jpeg|jpg|gif|png)(\?.*)?$/i)){
-
-        const img = document.createElement("img");
-        img.src = content;
-        img.style.maxWidth = "200px";
-
-        container.appendChild(img);
-
-    }else if(content.match(/\.(pdf|doc|docx|zip|txt|ppt|pptx|xlsx|csv)$/i)){
-
-        const link = document.createElement("a");
-        link.href = content;
-        link.target = "_blank";
-        link.textContent = content.split("/").pop();
-
-        container.appendChild(link);
-
-    }else{
-
-        const text = document.createElement("p");
-        text.textContent = content;
-
-        container.appendChild(text);
-    }
-
-    // Timestamp
-    const time = document.createElement('span');
-    time.classList.add('timestamp');
-    time.textContent = new Date(timestamp).toLocaleTimeString([], {
-        hour: '2-digit',
-        minute: '2-digit'
-    });
-
-    container.appendChild(time);
-
-    chatArea.appendChild(container);
+// ── Groups ────────────────────────────────────────────────────
+async function loadGroups() {
+    if (!nickname) return;
+    const res = await fetch(`${API_BASE}/groups/${nickname}`);
+    const groups = await res.json();
+    groupList.innerHTML = '';
+    if (Array.isArray(groups)) groups.forEach(appendGroupElement);
 }
 
-async function fetchAndDisplayUserChat() {
-    const userChatResponse = await fetch(`${API_BASE}/messages/${nickname}/${selectedUserId}`);
-    const userChat = await userChatResponse.json();
-    chatArea.innerHTML = '';
-    userChat.forEach(chat => {
-        displayMessage(chat.senderId, chat.content,chat.timestamp);
-    });
-    chatArea.scrollTop = chatArea.scrollHeight;
+function appendGroupElement(group) {
+    if (document.getElementById(group.id)) return;
+    const li = document.createElement('li');
+    li.classList.add('group-item');
+    li.id = group.id;
+
+    const icon = document.createElement('div');
+    icon.classList.add('group-item-icon');
+    icon.textContent = initials(group.name);
+
+    const nameSpan = document.createElement('span');
+    nameSpan.classList.add('group-item-name');
+    nameSpan.textContent = group.name;
+
+    const badge = document.createElement('span');
+    badge.classList.add('nbr-msg', 'hidden');
+    badge.textContent = '0';
+
+    li.appendChild(icon);
+    li.appendChild(nameSpan);
+    li.appendChild(badge);
+    li.addEventListener('click', groupItemClick);
+    groupList.appendChild(li);
 }
 
-
-function onError() {
-    connectingElement.textContent = 'Could not connect to WebSocket server. Please refresh this page to try again!';
-    connectingElement.style.color = 'red';
+function onGroupCreated(payload) {
+    const group = JSON.parse(payload.body);
+    if (group.members.includes(nickname)) appendGroupElement(group);
 }
 
-
-function sendMessage(event) {
-
-    const messageContent = messageInput.value.trim();
-
-    if (messageContent && stompClient) {
-
-        if(selectedGroupId){
-
-            const groupMessage = {
-                groupId: selectedGroupId,
-                senderId: nickname,
-                content: messageContent,
-                timestamp: new Date()
-            };
-
-            stompClient.send("/app/group.chat", {}, JSON.stringify(groupMessage));
-
-        }else{
-
-            const chatMessage = {
-                senderId: nickname,
-                recipientId: selectedUserId,
-                content: messageContent,
-                timestamp: new Date()
-            };
-
-            stompClient.send("/app/chat", {}, JSON.stringify(chatMessage));
-
-            // only display immediately for private chat
-            displayMessage(nickname, messageContent, new Date());
-        }
-
-        messageInput.value = '';
-    }
-
-    event.preventDefault();
-}
-
-async function loadGroups(){
-
-    if(!nickname){
-        console.log("Nickname not set yet");
-        return;
-    }
-
-    const response = await fetch(`${API_BASE}/groups/${nickname}`);
-
-    const groups = await response.json();
-
-    groupList.innerHTML = "";
-
-    if(Array.isArray(groups)){
-        groups.forEach(group => {
-            appendGroupElement(group);
-        });
-    }
-}
-
-async function onMessageReceived(payload) {
-
-    const message = JSON.parse(payload.body);
-
-    // show message only if this chat is open
-    if (selectedUserId === message.senderId) {
-
-        displayMessage(message.senderId, message.content,message.timestamp);
-        chatArea.scrollTop = chatArea.scrollHeight;
-
-    } else {
-
-        const notifiedUser = document.querySelector(`#${message.senderId}`);
-
-        if (notifiedUser) {
-
-            const nbrMsg = notifiedUser.querySelector('.nbr-msg');
-            if(!nbrMsg) return;
-            let count = parseInt(nbrMsg.textContent);
-
-            if(isNaN(count)){
-                count = 0;
-            }
-
-            nbrMsg.textContent = count + 1;
-            nbrMsg.classList.remove('hidden');
-        }
-    }
-}
-
-function onLogout() {
-    stompClient.send("/app/user.disconnectUser",
-        {},
-        JSON.stringify({nickname: nickname, fullname: fullname, status: 'OFFLINE'})
-    );
-    window.location.reload();
-}
-
-function groupItemClick(event) {
-
-    document.querySelectorAll('.group-item').forEach(item => {
-        item.classList.remove('active');
-    });
-
-    const clickedGroup = event.currentTarget;
-    clickedGroup.classList.add('active');
-
-    selectedGroupId = clickedGroup.getAttribute("id");
+function groupItemClick(e) {
+    document.querySelectorAll('.user-item, .group-item').forEach(i => i.classList.remove('active'));
+    const item = e.currentTarget;
+    item.classList.add('active');
+    selectedGroupId = item.id;
     selectedUserId = null;
 
-    // 🔥 show typing box
-    messageForm.classList.remove('hidden');
+    setBadge(selectedGroupId, 0);
 
-    if(groupSubscription){
-        groupSubscription.unsubscribe();
-        groupSubscription = null;
-    }
+    const nameEl = item.querySelector('.group-item-name');
+    setHeader(nameEl ? nameEl.textContent : selectedGroupId, true);
 
+    if (groupSubscription) { groupSubscription.unsubscribe(); groupSubscription = null; }
     groupSubscription = stompClient.subscribe(
         `/topic/group/${selectedGroupId}`,
         onGroupMessageReceived
     );
-    const nbrMsg = clickedGroup.querySelector('.nbr-msg');
-    if(nbrMsg){
-        nbrMsg.classList.add('hidden');
-        nbrMsg.textContent = '0';
-    }
 
     fetchGroupChat(selectedGroupId);
 }
 
-async function sendFile(){
+// ── Group modal ───────────────────────────────────────────────
+document.getElementById('createGroupBtn').addEventListener('click', () => {
+    groupModal.classList.remove('hidden');
+    document.getElementById('groupNameInput').value = '';
+    document.getElementById('groupMembersInput').value = '';
+    document.getElementById('groupNameInput').focus();
+});
+document.getElementById('modalClose').addEventListener('click', () => groupModal.classList.add('hidden'));
+document.getElementById('modalCancel').addEventListener('click', () => groupModal.classList.add('hidden'));
+document.getElementById('modalCreate').addEventListener('click', async () => {
+    const groupName = document.getElementById('groupNameInput').value.trim();
+    const membersRaw = document.getElementById('groupMembersInput').value;
+    if (!groupName) return;
+    const members = membersRaw.split(',').map(m => m.trim()).filter(Boolean);
+    members.push(nickname);
+    const res = await fetch(`${API_BASE}/groups`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: groupName, members })
+    });
+    const created = await res.json();
+    appendGroupElement(created);
+    groupModal.classList.add('hidden');
+});
+groupModal.addEventListener('click', e => { if (e.target === groupModal) groupModal.classList.add('hidden'); });
 
-    const fileInput = document.getElementById("fileInput");
+// ── Messages ─────────────────────────────────────────────────
+function displayMessage(senderId, content, timestamp = new Date()) {
+    const wrap = document.createElement('div');
+    wrap.classList.add('message', senderId === nickname ? 'sender' : 'receiver');
 
-    if(!fileInput.files.length){
-        return;   // do nothing if no file selected
+    if (senderId !== nickname) {
+        const name = document.createElement('div');
+        name.classList.add('sender-name');
+        name.textContent = senderId;
+        wrap.appendChild(name);
     }
 
-    const file = fileInput.files[0];
+    if (content.match(/\.(jpeg|jpg|gif|png)(\?.*)?$/i)) {
+        const img = document.createElement('img');
+        img.src = content;
+        wrap.appendChild(img);
+    } else if (content.match(/\.(pdf|doc|docx|zip|txt|ppt|pptx|xlsx|csv)$/i)) {
+        const a = document.createElement('a');
+        a.href = content; a.target = '_blank';
+        a.textContent = '📎 ' + content.split('/').pop();
+        wrap.appendChild(a);
+    } else {
+        const p = document.createElement('p');
+        p.textContent = content;
+        wrap.appendChild(p);
+    }
 
-    const formData = new FormData();
-    formData.append("file", file);
+    const time = document.createElement('span');
+    time.classList.add('timestamp');
+    time.textContent = new Date(timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    wrap.appendChild(time);
 
-    const response = await fetch(`${API_BASE}/upload`,  {
-        method:"POST",
-        body: formData
-    });
-
-    const fileUrl = await response.text();
-
-    messageInput.value = fileUrl;
-    fileInput.value = "";
+    chatArea.appendChild(wrap);
+    chatArea.scrollTop = chatArea.scrollHeight;
 }
 
-usernameForm.addEventListener('submit', connect, true); // step 1
+async function fetchAndDisplayUserChat() {
+    const res = await fetch(`${API_BASE}/messages/${nickname}/${selectedUserId}`);
+    const msgs = await res.json();
+    chatArea.innerHTML = '';
+    msgs.forEach(m => displayMessage(m.senderId, m.content, m.timestamp));
+    chatArea.scrollTop = chatArea.scrollHeight;
+}
+
+async function fetchGroupChat(groupId) {
+    const res = await fetch(`${API_BASE}/group/messages/${groupId}`);
+    const msgs = await res.json();
+    chatArea.innerHTML = '';
+    msgs.forEach(m => displayMessage(m.senderId, m.content, m.timestamp));
+    chatArea.scrollTop = chatArea.scrollHeight;
+}
+
+// BUG FIX 1 (continued): Renamed from onMessageReceived to make the purpose clear.
+// Handles ChatNotification objects sent to /user/{nickname}/queue/messages.
+function onPrivateMessageReceived(payload) {
+    const msg = JSON.parse(payload.body);
+    // msg has: id, senderId, recipientId, content, timestamp (ChatNotification shape)
+    const timestamp = msg.timestamp ? new Date(msg.timestamp) : new Date();
+    if (selectedUserId === msg.senderId) {
+        // Conversation with this person is open — display immediately
+        displayMessage(msg.senderId, msg.content, timestamp);
+    } else {
+        // Different conversation — increment the sidebar badge
+        incrementBadge(msg.senderId);
+    }
+}
+
+function onGroupMessageReceived(payload) {
+    const msg = JSON.parse(payload.body);
+    // msg has: groupId, senderId, content, timestamp
+    if (msg.groupId === selectedGroupId) {
+        displayMessage(msg.senderId, msg.content, msg.timestamp);
+    } else {
+        incrementBadge(msg.groupId);
+    }
+}
+
+function sendMessage(event) {
+    event.preventDefault();
+    const content = messageInput.value.trim();
+    if (!content || !stompClient) return;
+
+    if (selectedGroupId) {
+        stompClient.send('/app/group.chat', {}, JSON.stringify({
+            groupId: selectedGroupId,
+            senderId: nickname,
+            content,
+            timestamp: new Date()
+        }));
+    } else if (selectedUserId) {
+        stompClient.send('/app/chat', {}, JSON.stringify({
+            senderId: nickname,
+            recipientId: selectedUserId,
+            content,
+            timestamp: new Date()
+        }));
+        // Only the sender displays the message immediately (recipient gets it via WebSocket)
+        displayMessage(nickname, content, new Date());
+    }
+    messageInput.value = '';
+}
+
+async function sendFile() {
+    const fileInput = document.getElementById('fileInput');
+    if (!fileInput.files.length) return;
+
+    if (!selectedUserId && !selectedGroupId) {
+        alert('Please select a chat first before sending a file.');
+        fileInput.value = '';
+        return;
+    }
+
+    // Show uploading indicator
+    const originalPlaceholder = messageInput.placeholder;
+    messageInput.placeholder = 'Uploading file...';
+    messageInput.disabled = true;
+
+    try {
+        const formData = new FormData();
+        formData.append('file', fileInput.files[0]);
+        const res = await fetch(`${API_BASE}/upload`, { method: 'POST', body: formData });
+
+        if (!res.ok) throw new Error('Upload failed');
+
+        const fileUrl = await res.text();
+        fileInput.value = '';
+
+        // Auto-send the file as a message immediately
+        if (selectedGroupId) {
+            stompClient.send('/app/group.chat', {}, JSON.stringify({
+                groupId: selectedGroupId,
+                senderId: nickname,
+                content: fileUrl,
+                timestamp: new Date()
+            }));
+        } else {
+            stompClient.send('/app/chat', {}, JSON.stringify({
+                senderId: nickname,
+                recipientId: selectedUserId,
+                content: fileUrl,
+                timestamp: new Date()
+            }));
+            displayMessage(nickname, fileUrl, new Date());
+        }
+    } catch (e) {
+        alert('File upload failed. Please try again.');
+    } finally {
+        messageInput.placeholder = originalPlaceholder;
+        messageInput.disabled = false;
+    }
+}
+document.getElementById('fileInput').addEventListener('change', sendFile);
+
+function onLogout() {
+    if (stompClient) {
+        stompClient.send('/app/user.disconnectUser', {}, JSON.stringify({
+            nickname, fullname, status: 'OFFLINE'
+        }));
+    }
+    window.location.reload();
+}
+
+// ── Event bindings ────────────────────────────────────────────
+usernameForm.addEventListener('submit', connect, true);
 messageForm.addEventListener('submit', sendMessage, true);
 logout.addEventListener('click', onLogout, true);
 window.onbeforeunload = () => onLogout();

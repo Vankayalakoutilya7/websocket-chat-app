@@ -16,8 +16,7 @@ public class ChatMessageService {
     public ChatMessage save(ChatMessage chatMessage) {
         var chatId=chatRoomService.getChatRoomId(chatMessage.getSenderId(),chatMessage.getRecipientId(),true).orElseThrow();
         chatMessage.setChatId(chatId);
-        repository.save(chatMessage);
-        return chatMessage;
+        return repository.save(chatMessage);
         
     }
     public List<ChatMessage> findChatMessages(String senderId, String recipientId) {
