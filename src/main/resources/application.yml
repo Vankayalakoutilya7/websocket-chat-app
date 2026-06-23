@@ -1,0 +1,4 @@
+spring:
+  data:
+    mongodb:
+      uri: mongodb+srv://chatuser:chat123@cluster0.tdnwj1v.mongodb.net/chatdb?retryWrites=true&w=majority
